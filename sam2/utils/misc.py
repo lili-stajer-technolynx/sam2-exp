@@ -8,6 +8,7 @@ import os
 import warnings
 from threading import Thread
 
+import cv2
 import numpy as np
 import torch
 from PIL import Image
@@ -90,14 +91,21 @@ def mask_to_box(masks: torch.Tensor):
 
 
 def _load_img_as_tensor(img_path, image_size):
-    img_pil = Image.open(img_path)
-    img_np = np.array(img_pil.convert("RGB").resize((image_size, image_size)))
+    if not img_path.endswith('.npy'):
+        img_pil = Image.open(img_path)
+        img_np = np.array(img_pil.convert("RGB").resize((image_size, image_size)))
+        video_width, video_height = img_pil.size
+    else:
+        img_np_orig = np.load(img_path)
+        img_np = cv2.resize(img_np_orig, (image_size, image_size))
+        video_width, video_height = img_np_orig.shape[1], img_np_orig.shape[0]
+    
     if img_np.dtype == np.uint8:  # np.uint8 is expected for JPEG images
         img_np = img_np / 255.0
     else:
         raise RuntimeError(f"Unknown image dtype: {img_np.dtype} on {img_path}")
     img = torch.from_numpy(img_np).permute(2, 0, 1)
-    video_width, video_height = img_pil.size  # the original video size
+        
     return img, video_height, video_width
 
 
@@ -202,7 +210,8 @@ def load_video_frames(
     frame_names = [
         p
         for p in os.listdir(jpg_folder)
-        if os.path.splitext(p)[-1] in [".jpg", ".jpeg", ".JPG", ".JPEG"]
+        if os.path.splitext(p)[-1] in [".jpg", ".jpeg", ".JPG", ".JPEG", ".npy"]
+        # if os.path.splitext(p)[-1] in [".npy"]
     ]
     frame_names.sort(key=lambda p: int(os.path.splitext(p)[0]))
     num_frames = len(frame_names)
