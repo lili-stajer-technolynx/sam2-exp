@@ -91,15 +91,18 @@ def mask_to_box(masks: torch.Tensor):
 
 
 def _load_img_as_tensor(img_path, image_size):
-    if not img_path.endswith('.npy'):
-        img_pil = Image.open(img_path)
-        img_np = np.array(img_pil.convert("RGB").resize((image_size, image_size)))
-        video_width, video_height = img_pil.size
+    if isinstance(img_path, str):
+        if not img_path.endswith('.npy'):
+            img_pil = Image.open(img_path)
+            img_np = np.array(img_pil.convert("RGB").resize((image_size, image_size)))
+            video_width, video_height = img_pil.size
+        else:
+            img_np_orig = np.load(img_path)
+            img_np = cv2.resize(img_np_orig, (image_size, image_size))
+            video_width, video_height = img_np_orig.shape[1], img_np_orig.shape[0]
     else:
-        img_np_orig = np.load(img_path)
-        img_np = cv2.resize(img_np_orig, (image_size, image_size))
-        video_width, video_height = img_np_orig.shape[1], img_np_orig.shape[0]
-    
+        img_np = cv2.resize(img_path, (image_size, image_size))
+        video_width, video_height = img_path.shape[1], img_path.shape[0]   
     if img_np.dtype == np.uint8:  # np.uint8 is expected for JPEG images
         img_np = img_np / 255.0
     else:
@@ -185,6 +188,7 @@ def load_video_frames(
     img_std=(0.229, 0.224, 0.225),
     async_loading_frames=False,
     compute_device=torch.device("cuda"),
+    frame_names=None,
 ):
     """
     Load the video frames from a directory of JPEG files ("<frame_index>.jpg" format).
@@ -194,7 +198,7 @@ def load_video_frames(
 
     You can load a frame asynchronously by setting `async_loading_frames` to `True`.
     """
-    if isinstance(video_path, str) and os.path.isdir(video_path):
+    if (isinstance(video_path, str) and os.path.isdir(video_path)) or isinstance(video_path,np.ndarray):
         jpg_folder = video_path
     else:
         raise NotImplementedError(
@@ -207,17 +211,22 @@ def load_video_frames(
             "ffmpeg to start the JPEG file from 00000.jpg."
         )
 
-    frame_names = [
-        p
-        for p in os.listdir(jpg_folder)
-        if os.path.splitext(p)[-1] in [".jpg", ".jpeg", ".JPG", ".JPEG", ".npy"]
-        # if os.path.splitext(p)[-1] in [".npy"]
-    ]
-    frame_names.sort(key=lambda p: int(os.path.splitext(p)[0]))
+    # if (isinstance(video_path, str)):
+    #     frame_names = [
+    #         p
+    #         for p in os.listdir(jpg_folder)
+    #         if os.path.splitext(p)[-1] in [".jpg", ".jpeg", ".JPG", ".JPEG", ".npy"]
+    #     ]
+    #     frame_names.sort(key=lambda p: int(os.path.splitext(p)[0]))
+    
     num_frames = len(frame_names)
-    if num_frames == 0:
-        raise RuntimeError(f"no images found in {jpg_folder}")
-    img_paths = [os.path.join(jpg_folder, frame_name) for frame_name in frame_names]
+    
+    if isinstance(video_path, str):
+        img_paths = [os.path.join(jpg_folder, frame_name) for frame_name in frame_names]
+    else:
+        assert isinstance(video_path, np.ndarray), "Loaded data is not a NumPy array, check input"
+        assert video_path[0].ndim == 3, "The first element of the list is not a 3D array, check input"
+        img_paths=video_path
     img_mean = torch.tensor(img_mean, dtype=torch.float32)[:, None, None]
     img_std = torch.tensor(img_std, dtype=torch.float32)[:, None, None]
 
@@ -233,8 +242,12 @@ def load_video_frames(
         return lazy_images, lazy_images.video_height, lazy_images.video_width
 
     images = torch.zeros(num_frames, 3, image_size, image_size, dtype=torch.float32)
-    for n, img_path in enumerate(tqdm(img_paths, desc="frame loading (JPEG)")):
-        images[n], video_height, video_width = _load_img_as_tensor(img_path, image_size)
+    if isinstance(video_path, str):
+        for n, img_path in enumerate(tqdm(img_paths, desc="frame loading (JPEG)")):
+            images[n], video_height, video_width = _load_img_as_tensor(img_path, image_size)
+    else:
+        for n, frame in enumerate(video_path):
+            images[n], video_height, video_width = _load_img_as_tensor(frame, image_size)
     if not offload_video_to_cpu:
         images = images.to(compute_device)
         img_mean = img_mean.to(compute_device)
